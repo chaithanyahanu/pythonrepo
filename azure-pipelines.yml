@@ -2,7 +2,11 @@ trigger:
 - main
 
 variables:
-- group: acr-vars  # Variable group with ACR_USERNAME, ACR_PASSWORD, ACR_LOGIN_SERVER, IMAGE_NAME
+- group: pythongroup
+
+  # Derived variable for the full image name
+- name: fullImageName
+  value: $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
 
 pool:
   vmImage: ubuntu-latest
@@ -11,41 +15,54 @@ stages:
 - stage: BuildAndPush
   jobs:
   - job: DockerBuildPush
+    displayName: 'Build and Push Docker Image to ACR'
     steps:
     - checkout: self
 
     - task: Docker@2
-      displayName: Login to ACR
+      displayName: 'Login to ACR using service connection'
       inputs:
         command: login
-        containerRegistry: $(ACR_LOGIN_SERVER)
+        containerRegistry: acr-pythoncode  # <-- Docker Registry service connection
 
     - task: Docker@2
-      displayName: Build Docker Image
+      displayName: 'Build Docker Image'
       inputs:
         command: build
         Dockerfile: '**/Dockerfile'
         tags: |
-          $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+          $(fullImageName)
 
     - task: Docker@2
-      displayName: Push Image to ACR
+      displayName: 'Push Docker Image to ACR'
       inputs:
         command: push
         tags: |
-          $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+          $(fullImageName)
 
 - stage: DeployToVM
   dependsOn: BuildAndPush
   jobs:
-  - job: Deploy
+  - job: DeployViaSSH
+    displayName: 'Deploy Docker Image to Azure Linux VM'
     steps:
     - task: SSH@0
+      displayName: 'SSH and Deploy to VM'
       inputs:
-        sshEndpoint: 'linux-vm-ssh'
+        sshEndpoint: 'linux-vm-ssh'  # <-- Your SSH service connection
         runOptions: inline
         inline: |
+          echo "Logging into ACR manually..."
           docker login $(ACR_LOGIN_SERVER) -u $(ACR_USERNAME) -p $(ACR_PASSWORD)
-          docker pull $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
-          docker stop app || true && docker rm app || true
-          docker run -d --name app -p 80:8080 $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+
+          echo "Pulling image from ACR..."
+          docker pull $(fullImageName)
+
+          echo "Stopping and removing any existing container..."
+          docker stop app || true
+          docker rm app || true
+
+          echo "Running the new container..."
+          docker run -d --name app -p 80:8080 $(fullImageName)
+
+          echo "✅ Deployment complete."
