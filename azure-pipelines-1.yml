@@ -60,4 +60,4 @@ stages:
             --resource-group $(RESOURCE_GROUP) \
             --image $IMAGE
 
-          echo "✅ Container App updated successfully."
+          echo "Container App updated successfully."
