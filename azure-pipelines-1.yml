@@ -1,0 +1,64 @@
+trigger:
+- main
+
+variables:
+- group: pythongroup
+- name: imageTag
+  value: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+
+# -------------------------------
+# Stage 1: Build & Push to ACR
+# -------------------------------
+- stage: BuildAndPush
+  displayName: Build and Push Docker Image to ACR
+  jobs:
+  - job: DockerBuildPush
+    steps:
+    - checkout: self
+
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: acr-pythoncode
+
+    - script: |
+        docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag) .
+        docker push $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+      displayName: Build & Push Docker Image
+
+# -------------------------------
+# Stage 2: Deploy to Container Apps
+# -------------------------------
+- stage: DeployToContainerApps
+  dependsOn: BuildAndPush
+  jobs:
+  - job: Deploy
+    steps:
+    - task: AzureCLI@2
+      displayName: Deploy to Existing Azure Container App
+      inputs:
+        azureSubscription: azure-conn  # <-- Azure RM service connection
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+          az extension add --name containerapp --yes
+
+          IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+          
+          echo "Deploying new image to existing container app: $(CONTAINER_APP_NAME)"
+          az containerapp update \
+            --name $(CONTAINER_APP_NAME) \
+            --resource-group $(RESOURCE_GROUP) \
+            --image $IMAGE \
+            --registry-server $(ACR_LOGIN_SERVER) \
+            --registry-username $(ACR_USERNAME) \
+            --registry-password $(ACR_PASSWORD)
+
+          echo "✅ Deployment to Container App completed."
