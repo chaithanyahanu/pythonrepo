@@ -13,4 +13,4 @@ COPY . .
 
 # Expose port and run server
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
