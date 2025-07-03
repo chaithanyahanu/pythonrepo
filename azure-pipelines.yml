@@ -65,7 +65,7 @@ stages:
           docker rm app || true
 
           echo "Running new container..."
-          docker run -d --name app -p 80:8080 $IMAGE_NAME || { echo "Container failed to start"; exit 1; }
+          docker run -d --name app -p 80:5000 $IMAGE_NAME || { echo "Container failed to start"; exit 1; }
 
           echo "✅ Container deployed successfully"
           docker ps
