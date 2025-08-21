@@ -44,7 +44,7 @@ stages:
     - task: AzureCLI@2
       displayName: Deploy New Image to Existing Container App
       inputs:
-        azureSubscription: azure-conn  # Azure Resource Manager service connection
+        azureSubscription: azure-conn1  # Azure Resource Manager service connection
         scriptType: bash
         scriptLocation: inlineScript
         inlineScript: |
