@@ -39,25 +39,30 @@ stages:
   dependsOn: BuildAndPush
   displayName: Deploy to Azure Container App
   jobs:
-  - job: Deploy
-    steps:
-    - task: AzureCLI@2
-      displayName: Deploy New Image to Existing Container App
-      inputs:
-        azureSubscription: azure-conn1  # Azure Resource Manager service connection
-        scriptType: bash
-        scriptLocation: inlineScript
-        inlineScript: |
-          az config set extension.use_dynamic_install=yes_without_prompt
-          az extension add --name containerapp --yes
+  - deployment: Deploy
+    displayName: Deploy to Container App
+    environment: prod   # 👈 Environment with manual approval
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: Deploy New Image to Existing Container App
+            inputs:
+              azureSubscription: azure-conn1  # Azure Resource Manager service connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az config set extension.use_dynamic_install=yes_without_prompt
+                az extension add --name containerapp --yes
 
-          IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+                IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
 
-          echo "Deploying image $IMAGE to Container App $(CONTAINER_APP_NAME)..."
+                echo "Deploying image $IMAGE to Container App $(CONTAINER_APP_NAME)..."
 
-          az containerapp update \
-            --name $(CONTAINER_APP_NAME) \
-            --resource-group $(RESOURCE_GROUP) \
-            --image $IMAGE
+                az containerapp update \
+                  --name $(CONTAINER_APP_NAME) \
+                  --resource-group $(RESOURCE_GROUP) \
+                  --image $IMAGE
 
-          echo "Container App updated successfully."
+                echo "Container App updated successfully."
