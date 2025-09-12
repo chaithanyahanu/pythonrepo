@@ -1,0 +1,54 @@
+trigger:
+- main
+
+variables:
+- group: pythongroup      # contains ACR_LOGIN_SERVER, IMAGE_NAME, etc.
+- name: imageTag
+  value: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+
+# -------------------------------
+# Stage 1: Build Docker Image
+# -------------------------------
+- stage: BuildImage
+  displayName: Build Docker Image
+  jobs:
+  - job: Build
+    displayName: Build Docker Image Only
+    steps:
+    - checkout: self
+
+    - script: |
+        echo "Building Docker image..."
+        docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag) .
+      displayName: Build Docker Image
+
+# -------------------------------
+# Stage 2: Push to ACR (Requires Approval)
+# -------------------------------
+- stage: PushToACR
+  displayName: Push Docker Image to ACR
+  dependsOn: BuildImage
+  jobs:
+  - deployment: Push
+    displayName: Push Docker Image
+    environment: build-approval   # 👈 Pre-deployment approval required here
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Docker@2
+            displayName: Login to ACR using Service Connection
+            inputs:
+              command: login
+              containerRegistry: acr-pythoncode   # ACR service connection
+
+          - script: |
+              echo "Pushing Docker image to ACR..."
+              docker push $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+            displayName: Push Docker Image
+
