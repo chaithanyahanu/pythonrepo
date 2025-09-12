@@ -1,0 +1,47 @@
+trigger:
+- main
+
+variables:
+- group: pythongroup
+- name: imageTag
+  value: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: BuildAndPush
+  displayName: Build then Push Docker Image to ACR
+  jobs:
+
+  # 1️⃣ Build job runs immediately
+  - job: BuildImage
+    displayName: Build Docker Image
+    steps:
+    - checkout: self
+    - script: |
+        IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+        echo "Building Docker image: $IMAGE"
+        docker build -t $IMAGE .
+      displayName: Build Docker Image
+
+  # 2️⃣ Push job waits for approval
+  - deployment: PushImage
+    displayName: Push Docker Image to ACR
+    dependsOn: BuildImage
+    environment: acr-approval   # 👈 Approval configured here
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Docker@2
+            displayName: Login to ACR
+            inputs:
+              command: login
+              containerRegistry: acr-pythoncode
+
+          - script: |
+              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              echo "Pushing Docker image: $IMAGE"
+              docker push $IMAGE
+            displayName: Push Docker Image
