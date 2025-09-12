@@ -2,7 +2,7 @@ trigger:
 - main
 
 variables:
-- group: pythongroup      # contains ACR_LOGIN_SERVER, IMAGE_NAME, etc.
+- group: pythongroup
 - name: imageTag
   value: $(Build.BuildId)
 
@@ -10,45 +10,38 @@ pool:
   vmImage: ubuntu-latest
 
 stages:
-
-# -------------------------------
-# Stage 1: Build Docker Image
-# -------------------------------
-- stage: BuildImage
-  displayName: Build Docker Image
+- stage: BuildAndPush
+  displayName: Build then Push Docker Image to ACR
   jobs:
-  - job: Build
-    displayName: Build Docker Image Only
+
+  # 1️⃣ Build job runs immediately
+  - job: BuildImage
+    displayName: Build Docker Image
     steps:
     - checkout: self
-
     - script: |
-        echo "Building Docker image..."
-        docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag) .
+        IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+        echo "Building Docker image: $IMAGE"
+        docker build -t $IMAGE .
       displayName: Build Docker Image
 
-# -------------------------------
-# Stage 2: Push to ACR (Requires Approval)
-# -------------------------------
-- stage: PushToACR
-  displayName: Push Docker Image to ACR
-  dependsOn: BuildImage
-  jobs:
-  - deployment: Push
-    displayName: Push Docker Image
-    environment: build-approval   # 👈 Pre-deployment approval required here
+  # 2️⃣ Push job waits for approval
+  - deployment: PushImage
+    displayName: Push Docker Image to ACR
+    dependsOn: BuildImage
+    environment: acr-approval   # 👈 Approval configured here
     strategy:
       runOnce:
         deploy:
           steps:
           - task: Docker@2
-            displayName: Login to ACR using Service Connection
+            displayName: Login to ACR
             inputs:
               command: login
-              containerRegistry: acr-pythoncode   # ACR service connection
+              containerRegistry: acr-pythoncode
 
           - script: |
-              echo "Pushing Docker image to ACR..."
-              docker push $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              echo "Pushing Docker image: $IMAGE"
+              docker push $IMAGE
             displayName: Push Docker Image
-
