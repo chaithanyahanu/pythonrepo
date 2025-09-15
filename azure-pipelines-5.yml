@@ -2,43 +2,39 @@ trigger:
 - main
 
 variables:
-# 🔑 Variable group containing secrets (ACR creds & Teams webhook)
 - group: pythongroup
 - name: imageTag
   value: $(Build.BuildId)
 
 pool:
-  vmImage: ubuntu-latest   # 👉 Change to self-hosted if needed (e.g., 'pool: { name: mySelfHosted }')
+  name: 'Self-Hosted-Linux'   # ✅ Use your self-hosted agent pool name
 
 stages:
-
-# --------------------------------------
+# -------------------------------
 # Stage 1: Build Docker Image
-# --------------------------------------
+# -------------------------------
 - stage: Build
   displayName: Build Docker Image
   jobs:
   - job: BuildImage
-    displayName: Build Docker Image
     steps:
     - checkout: self
-
     - script: |
         IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
-        echo "🔨 Building Docker image: $IMAGE"
+        echo "📦 Building Docker image: $IMAGE"
         docker build -t $IMAGE .
       displayName: Build Docker Image
 
-# --------------------------------------
-# Stage 2: Push Image to ACR (Requires Approval)
-# --------------------------------------
+# -------------------------------
+# Stage 2: Push Docker Image (Approval)
+# -------------------------------
 - stage: Push
   displayName: Push Docker Image to ACR
   dependsOn: Build
+  condition: succeeded()        # only push if build succeeds
   jobs:
   - deployment: PushImage
-    displayName: Push Docker Image
-    environment: acr-approval      # 👈 Configure approval in Pipelines > Environments
+    environment: acr-approval   # 👈 environment with manual approval
     strategy:
       runOnce:
         deploy:
@@ -47,40 +43,41 @@ stages:
             displayName: Login to ACR
             inputs:
               command: login
-              containerRegistry: acr-pythoncode  # Azure DevOps ACR service connection
-
+              containerRegistry: acr-pythoncode
           - script: |
               IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
               echo "📤 Pushing Docker image: $IMAGE"
               docker push $IMAGE
             displayName: Push Docker Image
 
-# --------------------------------------
-# Stage 3: Teams Notification (Always Runs)
-# --------------------------------------
+# -------------------------------
+# Stage 3: Teams Notification (ALWAYS RUNS)
+# -------------------------------
 - stage: Notify
-  displayName: Notify Microsoft Teams
-  dependsOn: Push
-  condition: always()               # ✅ Runs even if Build/Push fails
+  displayName: Notify Teams
+  dependsOn: [Build, Push]      # depends on all previous stages
+  condition: always()           # ✅ Runs even if pipeline fails
   jobs:
-  - job: SendTeamsMessage
-    displayName: Send Teams Notification
+  - job: TeamsNotify
     steps:
-    - script: |
-        STATUS="✅ Success"
-        if [ "$(Agent.JobStatus)" != "Succeeded" ]; then
+    - checkout: none
+    - bash: |
+        # Determine final pipeline result from Azure DevOps variable
+        if [ "$(System.Failed)" == "True" ]; then
           STATUS="❌ Failed"
+        else
+          STATUS="✅ Success"
         fi
 
-        MESSAGE="🚀 **Azure DevOps Pipeline**\n
-        • Pipeline: $(Build.DefinitionName)\n
-        • Branch: $(Build.SourceBranchName)\n
-        • Run ID: $(Build.BuildId)\n
-        • Image: $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)\n
-        • Status: $STATUS"
+        IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}"
 
-        echo "Sending Teams notification..."
-        curl -H 'Content-Type: application/json' \
-             -d "{\"text\": \"$MESSAGE\"}" \
+        # Build Teams message payload
+        payload="{
+          \"text\": \"Azure DevOps Pipeline\\n• Pipeline: $(Build.DefinitionName)\\n• Branch: $(Build.SourceBranchName)\\n• Run ID: $(Build.BuildId)\\n• Image: ${IMAGE}\\n• Status: ${STATUS}\"
+        }"
+
+        echo "Sending Teams notification with status: $STATUS"
+        curl -H "Content-Type: application/json" \
+             -d "$payload" \
              $(TEAMS_WEBHOOK_URL)
-      displayName: Notify Teams Channel
+      displayName: Send Teams Notification
