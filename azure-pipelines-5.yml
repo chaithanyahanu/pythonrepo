@@ -73,13 +73,13 @@ stages:
 
         IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
 
-        # Use Markdown for line breaks
+        # Use <br> to force line breaks in Teams
         payload="{
           \"type\": \"MessageCard\",
           \"@type\": \"MessageCard\",
           \"@context\": \"http://schema.org/extensions\",
           \"summary\": \"Azure DevOps Pipeline Result\",
-          \"text\": \"**Azure DevOps Pipeline**\\n\\n**Pipeline:** $(Build.DefinitionName)\\n**Branch:** $(Build.SourceBranchName)\\n**Run ID:** $(Build.BuildId)\\n**Image:** ${IMAGE}\\n**Status:** ${STATUS}\"
+          \"text\": \"<b>Azure DevOps Pipeline</b><br><br>Pipeline: $(Build.DefinitionName)<br>Branch: $(Build.SourceBranchName)<br>Run ID: $(Build.BuildId)<br>Image: ${IMAGE}<br>Status: ${STATUS}\"
         }"
 
         echo "Sending Teams notification with status: $STATUS"
@@ -87,6 +87,7 @@ stages:
              -d "$payload" \
              $(TEAMS_WEBHOOK_URL)
       displayName: Send Teams Notification
+
 
 
 
