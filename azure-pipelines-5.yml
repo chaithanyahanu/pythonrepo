@@ -1,0 +1,86 @@
+trigger:
+- main
+
+variables:
+# 🔑 Variable group containing secrets (ACR creds & Teams webhook)
+- group: pythongroup
+- name: imageTag
+  value: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest   # 👉 Change to self-hosted if needed (e.g., 'pool: { name: mySelfHosted }')
+
+stages:
+
+# --------------------------------------
+# Stage 1: Build Docker Image
+# --------------------------------------
+- stage: Build
+  displayName: Build Docker Image
+  jobs:
+  - job: BuildImage
+    displayName: Build Docker Image
+    steps:
+    - checkout: self
+
+    - script: |
+        IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+        echo "🔨 Building Docker image: $IMAGE"
+        docker build -t $IMAGE .
+      displayName: Build Docker Image
+
+# --------------------------------------
+# Stage 2: Push Image to ACR (Requires Approval)
+# --------------------------------------
+- stage: Push
+  displayName: Push Docker Image to ACR
+  dependsOn: Build
+  jobs:
+  - deployment: PushImage
+    displayName: Push Docker Image
+    environment: acr-approval      # 👈 Configure approval in Pipelines > Environments
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Docker@2
+            displayName: Login to ACR
+            inputs:
+              command: login
+              containerRegistry: acr-pythoncode  # Azure DevOps ACR service connection
+
+          - script: |
+              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              echo "📤 Pushing Docker image: $IMAGE"
+              docker push $IMAGE
+            displayName: Push Docker Image
+
+# --------------------------------------
+# Stage 3: Teams Notification (Always Runs)
+# --------------------------------------
+- stage: Notify
+  displayName: Notify Microsoft Teams
+  dependsOn: Push
+  condition: always()               # ✅ Runs even if Build/Push fails
+  jobs:
+  - job: SendTeamsMessage
+    displayName: Send Teams Notification
+    steps:
+    - script: |
+        STATUS="✅ Success"
+        if [ "$(Agent.JobStatus)" != "Succeeded" ]; then
+          STATUS="❌ Failed"
+        fi
+
+        MESSAGE="🚀 **Azure DevOps Pipeline**\n
+        • Pipeline: $(Build.DefinitionName)\n
+        • Branch: $(Build.SourceBranchName)\n
+        • Run ID: $(Build.BuildId)\n
+        • Image: $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)\n
+        • Status: $STATUS"
+
+        echo "Sending Teams notification..."
+        curl -H 'Content-Type: application/json' \
+             -d "{\"text\": \"$MESSAGE\"}" \
+             $(TEAMS_WEBHOOK_URL)
+      displayName: Notify Teams Channel
