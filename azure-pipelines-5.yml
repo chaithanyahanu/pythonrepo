@@ -7,7 +7,7 @@ variables:
   value: $(Build.BuildId)
 
 pool:
-  vmImage: ubuntu-latest  # ✅ Use your self-hosted agent pool name
+  vmImage: ubuntu-latest
 
 stages:
 # -------------------------------
@@ -26,15 +26,15 @@ stages:
       displayName: Build Docker Image
 
 # -------------------------------
-# Stage 2: Push Docker Image (Approval)
+# Stage 2: Push Docker Image
 # -------------------------------
 - stage: Push
   displayName: Push Docker Image to ACR
   dependsOn: Build
-  condition: succeeded()        # only push if build succeeds
+  condition: succeeded()
   jobs:
   - deployment: PushImage
-    environment: acr-approval   # 👈 environment with manual approval
+    environment: acr-approval   # manual approval environment
     strategy:
       runOnce:
         deploy:
@@ -51,19 +51,22 @@ stages:
             displayName: Push Docker Image
 
 # -------------------------------
-# Stage 3: Teams Notification (ALWAYS RUNS)
+# Stage 3: Teams Notification
 # -------------------------------
 - stage: Notify
-  displayName: Notify Teams
-  dependsOn: [Build, Push]      # depends on all previous stages
-  condition: always()           # ✅ Runs even if pipeline fails
+  displayName: Notify Microsoft Teams
+  dependsOn:
+  - Build
+  - Push
+  condition: always()            # Always run to send a message
   jobs:
   - job: TeamsNotify
     steps:
     - checkout: none
     - bash: |
-        # Determine final pipeline result from Azure DevOps variable
-        if [ "$(System.Failed)" == "True" ]; then
+        # Check Build + Push results
+        if [ "${{ dependencies.Build.result }}" != "Succeeded" ] || \
+           [ "${{ dependencies.Push.result }}" != "Succeeded" ]; then
           STATUS="❌ Failed"
         else
           STATUS="✅ Success"
@@ -71,7 +74,6 @@ stages:
 
         IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}"
 
-        # Build Teams message payload
         payload="{
           \"text\": \"Azure DevOps Pipeline\\n• Pipeline: $(Build.DefinitionName)\\n• Branch: $(Build.SourceBranchName)\\n• Run ID: $(Build.BuildId)\\n• Image: ${IMAGE}\\n• Status: ${STATUS}\"
         }"
