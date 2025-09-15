@@ -51,28 +51,30 @@ stages:
             displayName: Push Docker Image
 
 # -------------------------------
-# Stage 3: Teams Notification
-# -------------------------------
 - stage: Notify
   displayName: Notify Microsoft Teams
   dependsOn:
   - Build
   - Push
-  condition: always()            # Always run to send a message
+  condition: always()
+  variables:
+    buildResult: $[ dependencies.Build.result ]   # <- runtime expression
+    pushResult:  $[ dependencies.Push.result ]    # <- runtime expression
   jobs:
   - job: TeamsNotify
     steps:
     - checkout: none
     - bash: |
-        # Check Build + Push results
-        if [ "${{ dependencies.Build.result }}" != "Succeeded" ] || \
-           [ "${{ dependencies.Push.result }}" != "Succeeded" ]; then
+        echo "Build result: $(buildResult)"
+        echo "Push result : $(pushResult)"
+
+        if [ "$(buildResult)" != "Succeeded" ] || [ "$(pushResult)" != "Succeeded" ]; then
           STATUS="❌ Failed"
         else
           STATUS="✅ Success"
         fi
 
-        IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}"
+        IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
 
         payload="{
           \"text\": \"Azure DevOps Pipeline\\n• Pipeline: $(Build.DefinitionName)\\n• Branch: $(Build.SourceBranchName)\\n• Run ID: $(Build.BuildId)\\n• Image: ${IMAGE}\\n• Status: ${STATUS}\"
@@ -83,3 +85,4 @@ stages:
              -d "$payload" \
              $(TEAMS_WEBHOOK_URL)
       displayName: Send Teams Notification
+
