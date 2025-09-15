@@ -17,10 +17,11 @@ stages:
   displayName: Build Docker Image
   jobs:
   - job: BuildImage
+    displayName: Build Docker Image
     steps:
     - checkout: self
     - script: |
-        IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+        IMAGE=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}
         echo "📦 Building Docker image: $IMAGE"
         docker build -t $IMAGE .
       displayName: Build Docker Image
@@ -45,11 +46,13 @@ stages:
               command: login
               containerRegistry: acr-pythoncode
           - script: |
-              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              IMAGE=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}
               echo "📤 Pushing Docker image: $IMAGE"
               docker push $IMAGE
             displayName: Push Docker Image
 
+# -------------------------------
+# Stage 3: Notify Microsoft Teams
 # -------------------------------
 - stage: Notify
   displayName: Notify Microsoft Teams
@@ -66,15 +69,15 @@ stages:
       steps:
         - checkout: none
         - bash: |
-            if [ "$(buildResult)" == "" ] && [ "$(pushResult)" == "" ]; then
+            if [ "${buildResult}" == "" ] && [ "${pushResult}" == "" ]; then
               STATUS="🚀 STARTED"
               FAILED_STAGE="N/A"
               COLOR="0076D7"
-            elif [ "$(buildResult)" != "Succeeded" ]; then
+            elif [ "${buildResult}" != "Succeeded" ]; then
               STATUS="❌ FAILED"
               FAILED_STAGE="Build"
               COLOR="FF0000"
-            elif [ "$(pushResult)" != "Succeeded" ]; then
+            elif [ "${pushResult}" != "Succeeded" ]; then
               STATUS="❌ FAILED"
               FAILED_STAGE="Push"
               COLOR="FF0000"
@@ -84,46 +87,15 @@ stages:
               COLOR="00FF00"
             fi
 
-            PIPELINE_NAME="$(Build.DefinitionName)"
-            PIPELINE_ID="$(Build.BuildId)"
-            BRANCH_NAME="$(Build.SourceBranchName)"
-            IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
-            PIPELINE_URL="https://dev.azure.com/$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+            PIPELINE_NAME="${Build.DefinitionName}"
+            PIPELINE_ID="${Build.BuildId}"
+            BRANCH_NAME="${Build.SourceBranchName}"
+            IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}"
+            PIPELINE_URL="https://dev.azure.com/${System.CollectionUri}${System.TeamProject}/_build/results?buildId=${Build.BuildId}"
 
-            payload=$(cat <<EOF
-{
-  "@type": "MessageCard",
-  "@context": "https://schema.org/extensions",
-  "themeColor": "$COLOR",
-  "summary": "Azure DevOps Pipeline Notification",
-  "sections": [
-    {
-      "activityTitle": "Azure DevOps Pipeline Notification",
-      "facts": [
-        {"name": "Pipeline:", "value": "$PIPELINE_NAME"},
-        {"name": "Branch:", "value": "$BRANCH_NAME"},
-        {"name": "Run ID:", "value": "$PIPELINE_ID"},
-        {"name": "Docker Image:", "value": "$IMAGE"},
-        {"name": "Status:", "value": "$STATUS"},
-        {"name": "Failed Stage:", "value": "$FAILED_STAGE"}
-      ],
-      "markdown": true
-    }
-  ],
-  "potentialAction": [
-    {
-      "@type": "OpenUri",
-      "name": "View Pipeline",
-      "targets": [
-        {"os": "default", "uri": "$PIPELINE_URL"}
-      ]
-    }
-  ]
-}
-EOF
-)
+            # Build JSON payload as a single line string
+            payload="{\"@type\":\"MessageCard\",\"@context\":\"https://schema.org/extensions\",\"themeColor\":\"${COLOR}\",\"summary\":\"Azure DevOps Pipeline Notification\",\"sections\":[{\"activityTitle\":\"Azure DevOps Pipeline Notification\",\"facts\":[{\"name\":\"Pipeline:\",\"value\":\"${PIPELINE_NAME}\"},{\"name\":\"Branch:\",\"value\":\"${BRANCH_NAME}\"},{\"name\":\"Run ID:\",\"value\":\"${PIPELINE_ID}\"},{\"name\":\"Docker Image:\",\"value\":\"${IMAGE}\"},{\"name\":\"Status:\",\"value\":\"${STATUS}\"},{\"name\":\"Failed Stage:\",\"value\":\"${FAILED_STAGE}\"}],\"markdown\":true}],\"potentialAction\":[{\"@type\":\"OpenUri\",\"name\":\"View Pipeline\",\"targets\":[{\"os\":\"default\",\"uri\":\"${PIPELINE_URL}\"}]}]}"
 
-            curl -H "Content-Type: application/json" -d "$payload" $(TEAMS_WEBHOOK_URL)
-
-
+            # Send Teams notification
+            curl -H "Content-Type: application/json" -d "$payload" "${TEAMS_WEBHOOK_URL}"
 
