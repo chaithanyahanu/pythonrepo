@@ -58,16 +58,13 @@ stages:
   - Push
   condition: always()
   variables:
-    buildResult: $[ dependencies.Build.result ]   # <- runtime expression
-    pushResult:  $[ dependencies.Push.result ]    # <- runtime expression
+    buildResult: $[ dependencies.Build.result ]
+    pushResult:  $[ dependencies.Push.result ]
   jobs:
   - job: TeamsNotify
     steps:
     - checkout: none
     - bash: |
-        echo "Build result: $(buildResult)"
-        echo "Push result : $(pushResult)"
-
         if [ "$(buildResult)" != "Succeeded" ] || [ "$(pushResult)" != "Succeeded" ]; then
           STATUS="❌ Failed"
         else
@@ -77,7 +74,7 @@ stages:
         IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
 
         payload="{
-          \"text\": \"Azure DevOps Pipeline\\n• Pipeline: $(Build.DefinitionName)\\n• Branch: $(Build.SourceBranchName)\\n• Run ID: $(Build.BuildId)\\n• Image: ${IMAGE}\\n• Status: ${STATUS}\"
+          \"text\": \"Azure DevOps Pipeline\nPipeline: $(Build.DefinitionName)\nBranch: $(Build.SourceBranchName)\nRun ID: $(Build.BuildId)\nImage: ${IMAGE}\nStatus: ${STATUS}\"
         }"
 
         echo "Sending Teams notification with status: $STATUS"
@@ -85,4 +82,6 @@ stages:
              -d "$payload" \
              $(TEAMS_WEBHOOK_URL)
       displayName: Send Teams Notification
+
+
 
