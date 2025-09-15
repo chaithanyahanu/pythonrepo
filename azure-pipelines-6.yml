@@ -2,13 +2,9 @@ trigger:
 - main
 
 variables:
-- group: pythongroup       # Secrets group (contains TEAMS_WEBHOOK_URL)
+- group: pythongroup        # contains: ACR_LOGIN_SERVER, IMAGE_NAME, TEAMS_WEBHOOK_URL
 - name: imageTag
   value: $(Build.BuildId)
-- name: IMAGE_NAME
-  value: sample-fastapi-api       # 👈 Set your image name
-- name: ACR_LOGIN_SERVER
-  value: pythoncodereg.azurecr.io # 👈 Set your ACR login server
 
 pool:
   vmImage: ubuntu-latest
@@ -24,7 +20,7 @@ stages:
     steps:
     - checkout: self
     - script: |
-        IMAGE=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}
+        IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
         echo "📦 Building Docker image: $IMAGE"
         docker build -t $IMAGE .
       displayName: Build Docker Image
@@ -38,7 +34,7 @@ stages:
   condition: succeeded()
   jobs:
   - deployment: PushImage
-    environment: acr-approval   # Manual approval environment
+    environment: acr-approval     # manual approval environment
     strategy:
       runOnce:
         deploy:
@@ -47,60 +43,69 @@ stages:
             displayName: Login to ACR
             inputs:
               command: login
-              containerRegistry: acr-pythoncode
+              containerRegistry: acr-pythoncode   # existing ACR service connection
           - script: |
-              IMAGE=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${imageTag}
+              IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
               echo "📤 Pushing Docker image: $IMAGE"
               docker push $IMAGE
             displayName: Push Docker Image
 
 # -------------------------------
 # Stage 3: Notify Microsoft Teams
-# ------------------------------
+# -------------------------------
 - stage: Notify
-  displayName: "Send Teams Notification"
+  displayName: Notify Microsoft Teams
+  dependsOn:
+    - Build
+    - Push
+  condition: always()
+  variables:
+    buildResult: $[ dependencies.Build.result ]
+    pushResult:  $[ dependencies.Push.result ]
   jobs:
   - job: TeamsNotify
-    displayName: "Post notification to Teams"
     steps:
+    - checkout: none
     - bash: |
-        PIPELINE_URL="https://dev.azure.com/$(System.CollectionName)/$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
-        echo "Sending Teams notification..."
-        payload=$(cat <<'EOF'
-        {
-          "@type": "MessageCard",
-          "@context": "https://schema.org/extensions",
-          "summary": "Azure DevOps Pipeline Notification",
-          "themeColor": "0076D7",
-          "title": "Azure DevOps Pipeline Notification",
-          "sections": [
-            {
-              "facts": [
-                {"name": "Pipeline", "value": "$(Build.DefinitionName)"},
-                {"name": "Branch", "value": "$(Build.SourceBranchName)"},
-                {"name": "Run ID", "value": "$(Build.BuildId)"},
-                {"name": "Docker Image", "value": "pythoncodereg.azurecr.io/sample-fastapi-api:$(Build.BuildId)"},
-                {"name": "Status", "value": "$(Build.Status)"}
-              ],
-              "markdown": true
-            }
-          ],
-          "potentialAction": [
-            {
-              "@type": "OpenUri",
-              "name": "🔗 View Pipeline",
-              "targets": [
-                {"os": "default", "uri": "PIPELINE_URL_PLACEHOLDER"}
-              ]
-            }
-          ]
-        }
-        EOF
-        )
-        # Replace placeholder with actual URL
-        payload=${payload//PIPELINE_URL_PLACEHOLDER/$PIPELINE_URL}
+        # Determine overall pipeline status
+        if [ "$(buildResult)" != "Succeeded" ] || [ "$(pushResult)" != "Succeeded" ]; then
+          STATUS="❌ Failed"
+        else
+          STATUS="✅ Success"
+        fi
 
-        # Send to Teams
-        curl -H "Content-Type: application/json" -d "$payload" "$(teamsWebhook)"
-      displayName: "Send Teams Card"
+        IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
 
+        # Direct Azure DevOps pipeline run URL
+        PIPELINE_URL="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results"
+
+        # Message card for Teams
+        payload="{
+          \"@type\": \"MessageCard\",
+          \"@context\": \"http://schema.org/extensions\",
+          \"summary\": \"Azure DevOps Pipeline Result\",
+          \"themeColor\": \"0076D7\",
+          \"sections\": [{
+            \"activityTitle\": \"Azure DevOps Pipeline Notification\",
+            \"facts\": [
+              {\"name\": \"Pipeline\", \"value\": \"$(Build.DefinitionName)\"},
+              {\"name\": \"Branch\", \"value\": \"$(Build.SourceBranchName)\"},
+              {\"name\": \"Run ID\", \"value\": \"$(Build.BuildId)\"},
+              {\"name\": \"Docker Image\", \"value\": \"${IMAGE}\"},
+              {\"name\": \"Status\", \"value\": \"${STATUS}\"}
+            ]
+          }],
+          \"potentialAction\": [{
+            \"@type\": \"OpenUri\",
+            \"name\": \"🔗 View Pipeline\",
+            \"targets\": [
+              {\"os\": \"default\", \"uri\": \"${PIPELINE_URL}\"}
+            ]
+          }]
+        }"
+
+        echo "Sending Teams notification with status: $STATUS"
+        curl -H "Content-Type: application/json" \
+             -d "$payload" \
+             $(TEAMS_WEBHOOK_URL)
+      displayName: Send Teams Notification
