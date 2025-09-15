@@ -1,0 +1,129 @@
+trigger:
+- main
+
+variables:
+- group: pythongroup
+- name: imageTag
+  value: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+# -------------------------------
+# Stage 1: Build Docker Image
+# -------------------------------
+- stage: Build
+  displayName: Build Docker Image
+  jobs:
+  - job: BuildImage
+    steps:
+    - checkout: self
+    - script: |
+        IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+        echo "📦 Building Docker image: $IMAGE"
+        docker build -t $IMAGE .
+      displayName: Build Docker Image
+
+# -------------------------------
+# Stage 2: Push Docker Image
+# -------------------------------
+- stage: Push
+  displayName: Push Docker Image to ACR
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: PushImage
+    environment: acr-approval   # manual approval environment
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Docker@2
+            displayName: Login to ACR
+            inputs:
+              command: login
+              containerRegistry: acr-pythoncode
+          - script: |
+              IMAGE=$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+              echo "📤 Pushing Docker image: $IMAGE"
+              docker push $IMAGE
+            displayName: Push Docker Image
+
+# -------------------------------
+- stage: Notify
+  displayName: Notify Microsoft Teams
+  dependsOn:
+    - Build
+    - Push
+  condition: always()
+  variables:
+    buildResult: $[ dependencies.Build.result ]
+    pushResult:  $[ dependencies.Push.result ]
+  jobs:
+    - job: TeamsNotify
+      displayName: Send Teams Notification
+      steps:
+        - checkout: none
+        - bash: |
+            if [ "$(buildResult)" == "" ] && [ "$(pushResult)" == "" ]; then
+              STATUS="🚀 STARTED"
+              FAILED_STAGE="N/A"
+              COLOR="0076D7"
+            elif [ "$(buildResult)" != "Succeeded" ]; then
+              STATUS="❌ FAILED"
+              FAILED_STAGE="Build"
+              COLOR="FF0000"
+            elif [ "$(pushResult)" != "Succeeded" ]; then
+              STATUS="❌ FAILED"
+              FAILED_STAGE="Push"
+              COLOR="FF0000"
+            else
+              STATUS="✅ SUCCEEDED"
+              FAILED_STAGE="N/A"
+              COLOR="00FF00"
+            fi
+
+            PIPELINE_NAME="$(Build.DefinitionName)"
+            PIPELINE_ID="$(Build.BuildId)"
+            BRANCH_NAME="$(Build.SourceBranchName)"
+            IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
+            PIPELINE_URL="https://dev.azure.com/$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+
+            payload=$(cat <<EOF
+{
+  "@type": "MessageCard",
+  "@context": "https://schema.org/extensions",
+  "themeColor": "$COLOR",
+  "summary": "Azure DevOps Pipeline Notification",
+  "sections": [
+    {
+      "activityTitle": "Azure DevOps Pipeline Notification",
+      "facts": [
+        {"name": "Pipeline:", "value": "$PIPELINE_NAME"},
+        {"name": "Branch:", "value": "$BRANCH_NAME"},
+        {"name": "Run ID:", "value": "$PIPELINE_ID"},
+        {"name": "Docker Image:", "value": "$IMAGE"},
+        {"name": "Status:", "value": "$STATUS"},
+        {"name": "Failed Stage:", "value": "$FAILED_STAGE"}
+      ],
+      "markdown": true
+    }
+  ],
+  "potentialAction": [
+    {
+      "@type": "OpenUri",
+      "name": "View Pipeline",
+      "targets": [
+        {"os": "default", "uri": "$PIPELINE_URL"}
+      ]
+    }
+  ]
+}
+EOF
+)
+
+            curl -H "Content-Type: application/json" -d "$payload" $(TEAMS_WEBHOOK_URL)
+
+
+
