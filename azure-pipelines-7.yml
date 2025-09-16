@@ -1,0 +1,43 @@
+trigger:
+- azure-pipeline
+
+variables:
+- group: vizzhy-static-vars    # All variables come from the variable group
+
+pool:
+  name: pythonagent            # Self-hosted agent
+
+steps:
+# Install Node.js (only if self-hosted VM doesn’t already have Node)
+- task: NodeTool@0
+  inputs:
+    versionSpec: '20.x'
+  displayName: 'Install Node.js'
+
+#  Download the .env file from the public source URL
+- script: |
+    echo "Downloading .env from $ENV_FILE_URL"
+    curl -o .env "$ENV_FILE_URL"
+  displayName: 'Download .env file'
+
+#  Install dependencies
+- script: |
+    echo "Installing dependencies"
+    npm install
+  displayName: 'Install npm packages'
+
+#  Build the React app
+- script: |
+    echo "Building the React app"
+    npm run build
+  displayName: 'Build React App'
+
+# Upload build output to private Azure Storage Static Website using Key Authentication
+- script: |
+    echo "Uploading build output to $TARGET_STORAGE_ACCOUNT/$TARGET_CONTAINER"
+    az storage blob upload-batch \
+      --account-name $TARGET_STORAGE_ACCOUNT \
+      --account-key $TARGET_STORAGE_KEY \
+      --destination $TARGET_CONTAINER \
+      --source build
+  displayName: 'Upload to Azure Storage'
