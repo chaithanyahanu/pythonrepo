@@ -2,13 +2,8 @@ trigger:
 - main   # Adjust if needed
 
 variables:
-- group: dev-ai-vargroup      # All values come from this group
-  # Expected keys inside the group:
-  # ACR_LOGIN_SERVER
-  # IMAGE_NAME
-  # RESOURCE_GROUP
-  # APP_SERVICE_NAME
-
+- group: dev-ai-vargroup
+ 
 pool:
   vmImage: ubuntu-latest
 
@@ -28,7 +23,7 @@ stages:
       displayName: Login to ACR
       inputs:
         command: login
-        containerRegistry: AIregistryconnection   # Docker Registry service connection
+        containerRegistry: app-reg-connection   # Docker Registry service connection
 
     - script: |
         docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId) .
@@ -45,7 +40,7 @@ stages:
   jobs:
   - deployment: DeployJob
     displayName: Manual Approval then Deploy
-    environment: Dev          # <-- Environment in Azure DevOps with Approval enabled
+    environment: Dev        # <-- Environment in Azure DevOps with Approval enabled
     strategy:
       runOnce:
         deploy:
@@ -53,7 +48,7 @@ stages:
           - task: AzureCLI@2
             displayName: Deploy New Docker Image
             inputs:
-              azureSubscription: dev-ai-connection   # Azure Resource Manager service connection
+              azureSubscription: app-rg-connection   # Azure Resource Manager service connection
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
