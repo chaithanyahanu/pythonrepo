@@ -1,0 +1,69 @@
+trigger:
+- main   # Adjust if needed
+
+variables:
+- group: dev-ai-vargroup      # All values come from this group
+  # Expected keys inside the group:
+  # ACR_LOGIN_SERVER
+  # IMAGE_NAME
+  # RESOURCE_GROUP
+  # APP_SERVICE_NAME
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+
+# -------------------------------
+# Stage 1: Build & Push to ACR
+# -------------------------------
+- stage: BuildAndPush
+  displayName: Build and Push Docker Image
+  jobs:
+  - job: DockerBuildPush
+    steps:
+    - checkout: self
+
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: AIregistryconnection   # Docker Registry service connection
+
+    - script: |
+        docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId) .
+        docker push $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)
+      displayName: Build and Push Docker Image
+
+
+# -------------------------------
+# Stage 2: Deploy to App Service
+# -------------------------------
+- stage: Deploy
+  displayName: Deploy to Azure App Service
+  dependsOn: BuildAndPush
+  jobs:
+  - deployment: DeployJob
+    displayName: Manual Approval then Deploy
+    environment: Dev          # <-- Environment in Azure DevOps with Approval enabled
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: Deploy New Docker Image
+            inputs:
+              azureSubscription: dev-ai-connection   # Azure Resource Manager service connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(Build.BuildId)"
+                echo "Deploying $IMAGE to App Service $(APP_SERVICE_NAME)..."
+
+                az webapp config container set \
+                  --name $(APP_SERVICE_NAME) \
+                  --resource-group $(RESOURCE_GROUP) \
+                  --docker-custom-image-name $IMAGE \
+                  --docker-registry-server-url https://$(ACR_LOGIN_SERVER)
+
+                echo "Deployment completed successfully."
