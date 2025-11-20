@@ -2,109 +2,162 @@ trigger:
 - main
 
 variables:
-- group: pythongroup        # contains: ACR_LOGIN_SERVER, IMAGE_NAME, TEAMS_WEBHOOK_URL
+- group: pythongroup        # contains ACR_LOGIN_SERVER, IMAGE_NAME, TEAMS_WEBHOOK_URL, STORAGE_ACCOUNT, STORAGE_CONTAINER, STORAGE_KEY, AZURE_SERVICE_CONNECTION
 - name: imageTag
   value: $(Build.BuildId)
 
 pool:
-  name: pythonagent
+  vmImage: ubuntu-latest   # <<< MICROSOFT-HOSTED AGENT
 
 stages:
-# -------------------------------
-# Stage 1: Build Docker Image
-# -------------------------------
-- stage: Build
-  displayName: Build Docker Image
+# ===============================
+# STAGE 0 - Notify Start
+# ===============================
+- stage: NotifyStart
+  displayName: Notify Microsoft Teams (Start)
   jobs:
-  - job: BuildImage
-    steps:
-    - checkout: self
-    - script: |
-        IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
-        echo "📦 Building Docker image: $IMAGE"
-        docker build -t $IMAGE .
-      displayName: Build Docker Image
-
-# -------------------------------
-# Stage 2: Push Docker Image
-# -------------------------------
-- stage: Push
-  displayName: Push Docker Image to ACR
-  dependsOn: Build
-  condition: succeeded()
-  jobs:
-  - deployment: PushImage
-    environment: acr-approval     # manual approval environment
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - task: Docker@2
-            displayName: Login to ACR
-            inputs:
-              command: login
-              containerRegistry: acr-pythoncode   # existing ACR service connection
-          - script: |
-              IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
-              echo "📤 Pushing Docker image: $IMAGE"
-              docker push $IMAGE
-            displayName: Push Docker Image
-
-# -------------------------------
-# Stage 3: Notify Microsoft Teams
-# -------------------------------
-- stage: Notify
-  displayName: Notify Microsoft Teams
-  dependsOn:
-    - Build
-    - Push
-  condition: always()
-  variables:
-    buildResult: $[ dependencies.Build.result ]
-    pushResult:  $[ dependencies.Push.result ]
-  jobs:
-  - job: TeamsNotify
+  - job: TeamsStartNotify
+    displayName: Send Teams Notification (Start)
     steps:
     - checkout: none
     - bash: |
-        # Determine overall pipeline status
-        if [ "$(buildResult)" != "Succeeded" ] || [ "$(pushResult)" != "Succeeded" ]; then
-          STATUS="❌ Failed"
-        else
-          STATUS="✅ Success"
-        fi
+        STATUS="🚀 Pipeline Started"
 
-        IMAGE="$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)"
-
-        # Direct Azure DevOps pipeline run URL
         PIPELINE_URL="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results"
 
-        # Message card for Teams
         payload="{
           \"@type\": \"MessageCard\",
           \"@context\": \"http://schema.org/extensions\",
-          \"summary\": \"Azure DevOps Pipeline Result\",
+          \"summary\": \"Pipeline Started\",
           \"themeColor\": \"0076D7\",
           \"sections\": [{
-            \"activityTitle\": \"Azure DevOps Pipeline Notification\",
+            \"activityTitle\": \"Azure DevOps Pipeline Started\",
             \"facts\": [
               {\"name\": \"Pipeline\", \"value\": \"$(Build.DefinitionName)\"},
               {\"name\": \"Branch\", \"value\": \"$(Build.SourceBranchName)\"},
-              {\"name\": \"Run ID\", \"value\": \"$(Build.BuildId)\"},
-              {\"name\": \"Docker Image\", \"value\": \"${IMAGE}\"},
-              {\"name\": \"Status\", \"value\": \"${STATUS}\"}
-            ]
-          }],
-          \"potentialAction\": [{
-            \"@type\": \"OpenUri\",
-            \"name\": \"🔗 View Pipeline\",
-            \"targets\": [
-              {\"os\": \"default\", \"uri\": \"${PIPELINE_URL}\"}
+              {\"name\": \"Run ID\", \"value\": \"$(Build.BuildId)\"}
             ]
           }]
         }"
 
-        echo "Sending Teams notification with status: $STATUS"
+        curl -H "Content-Type: application/json" \
+             -d "$payload" \
+             $(TEAMS_WEBHOOK_URL)
+      displayName: Send Teams Start Notification
+
+
+# ===============================
+# STAGE 1 - ZIP Backup + Build & Push ACR
+# ===============================
+- stage: BuildAndPush
+  displayName: Build and Push Docker Image
+  jobs:
+  - job: DockerBuildPush
+    displayName: Build & Push Image
+    steps:
+
+    - checkout: self
+
+    # -----------------------------------------
+    # Step 1: Create ZIP Backup with Date-Time
+    # -----------------------------------------
+    - bash: |
+        echo "Creating ZIP backup..."
+
+        export ZIP_NAME="backup_$(date +'%Y%m%d_%H%M%S').zip"
+        echo "Zip Name: $ZIP_NAME"
+
+        zip -r "$ZIP_NAME" . -x "*.git*"
+
+        echo "##vso[task.setvariable variable=ZIP_NAME]$ZIP_NAME"
+      displayName: Create ZIP Backup Before Build
+
+    # -----------------------------------------
+    # Step 2: Upload ZIP to Azure Blob Storage
+    # -----------------------------------------
+    - task: AzureCLI@2
+      displayName: Upload ZIP to Blob Storage
+      inputs:
+        azureSubscription: $(AZURE_SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          echo "Uploading $ZIP_NAME to blob..."
+
+          az storage blob upload \
+            --account-name $(STORAGE_ACCOUNT) \
+            --container-name $(STORAGE_CONTAINER) \
+            --name "$ZIP_NAME" \
+            --file "$ZIP_NAME" \
+            --auth-mode key \
+            --account-key "$(STORAGE_KEY)"
+
+    # -----------------------------------------
+    # Step 3: Docker Login (ACR)
+    # -----------------------------------------
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: app-reg-connection
+
+    # -----------------------------------------
+    # Step 4: Docker Build & Push
+    # -----------------------------------------
+    - bash: |
+        docker build -t $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag) .
+        docker push $(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)
+      displayName: Build & Push Docker Image
+
+
+# ===============================
+# STAGE 2 - Notify End
+# ===============================
+- stage: Notify
+  displayName: Notify Microsoft Teams (End)
+  dependsOn: BuildAndPush
+  condition: always()
+  jobs:
+  - job: TeamsNotify
+    displayName: Send Teams Notification
+    variables:
+      BUILD_STAGE_RESULT: $[ stageDependencies.BuildAndPush.DockerBuildPush.result ]
+
+    steps:
+    - checkout: none
+    - bash: |
+        echo "Build stage result: $(BUILD_STAGE_RESULT)"
+
+        if [ "$(BUILD_STAGE_RESULT)" == "Succeeded" ]; then
+          STATUS="✅ Success"
+          COLOR="00C853"
+        elif [ "$(BUILD_STAGE_RESULT)" == "Skipped" ]; then
+          STATUS="⚠️ Skipped"
+          COLOR="FFD600"
+        else
+          STATUS="❌ Failed"
+          COLOR="D32F2F"
+        fi
+
+        PIPELINE_URL="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+
+        payload="{
+          \"@type\": \"MessageCard\",
+          \"@context\": \"http://schema.org/extensions\",
+          \"summary\": \"Pipeline Result\",
+          \"themeColor\": \"${COLOR}\",
+          \"sections\": [{
+            \"activityTitle\": \"Azure DevOps Pipeline Result\",
+            \"facts\": [
+              {\"name\": \"Pipeline\", \"value\": \"$(Build.DefinitionName)\"},
+              {\"name\": \"Branch\", \"value\": \"$(Build.SourceBranchName)\"},
+              {\"name\": \"Run ID\", \"value\": \"$(Build.BuildId)\"},
+              {\"name\": \"Docker Image\", \"value\": \"$(ACR_LOGIN_SERVER)/$(IMAGE_NAME):$(imageTag)\"},
+              {\"name\": \"Status\", \"value\": \"${STATUS}\"}
+            ]
+          }]
+        }"
+
         curl -H "Content-Type: application/json" \
              -d "$payload" \
              $(TEAMS_WEBHOOK_URL)
