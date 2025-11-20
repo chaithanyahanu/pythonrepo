@@ -101,7 +101,7 @@ stages:
       displayName: Login to ACR
       inputs:
         command: login
-        containerRegistry: pythoncodereg
+        containerRegistry: pocregistry
 
     # -----------------------------------------
     # Step 4: Build & Push Docker Image
