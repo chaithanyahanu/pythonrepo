@@ -1,5 +1,5 @@
-trigger:
-- main   # Adjust if needed
+#trigger:
+#- main   # Adjust if needed
 
 variables:
 - group: dev-ai-vargroup
