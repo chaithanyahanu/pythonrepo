@@ -6,7 +6,6 @@ on:
       image_tag:
         description: 'Docker Image Tag'
         required: false
-        default: 'latest'
       deployMessage:
         description: "Deployment message / reason"
         required: true
